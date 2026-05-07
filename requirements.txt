@@ -1,0 +1,5 @@
+obd>=0.7.1
+customtkinter>=5.2.0
+pyserial>=3.5
+# Optional — improves Bluetooth device detection on Windows
+# wmi>=1.5.1
