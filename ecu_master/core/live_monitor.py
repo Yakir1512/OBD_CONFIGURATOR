@@ -1,7 +1,8 @@
 """
 ecu_master/core/live_monitor.py
 Polls OBD commands in a background thread.
-Calls on_update(name, value_str) — wire to UI via after().
+Calls on_update(name, value_str, unit, severity) — wire to UI via after().
+Evaluates each value through AlertManager.
 """
 
 import time
@@ -10,6 +11,7 @@ import obd
 
 from ..utils.logger import Logger
 from .connection_manager import ConnectionManager
+from .alert_manager import AlertManager
 
 
 # Commands polled in every cycle — add / remove freely
@@ -33,19 +35,21 @@ class LiveMonitor:
         is_running  → bool
 
     Callback:
-        on_update(metric_name: str, value_str: str)
+        on_update(metric_name: str, value_str: str, unit: str, severity: str)
         on_connection_lost()
     """
 
-    def __init__(self, cm: ConnectionManager, logger: Logger):
-        self.cm     = cm
-        self.logger = logger
-        self._running = False
+    def __init__(self, cm: ConnectionManager, logger: Logger,
+                 alert_manager: AlertManager | None = None):
+        self.cm           = cm
+        self.logger       = logger
+        self.am           = alert_manager or AlertManager()
+        self._running     = False
         self._thread: threading.Thread | None = None
-        self._interval = 1.0
+        self._interval    = 1.0
 
         # Callbacks
-        self.on_update: callable           = lambda name, val: None
+        self.on_update: callable           = lambda name, val, unit, sev: None
         self.on_connection_lost: callable  = lambda: None
 
     @property
@@ -82,7 +86,7 @@ class LiveMonitor:
                 self.on_connection_lost()
                 break
 
-            for name, cmd, _ in MONITOR_COMMANDS:
+            for name, cmd, unit in MONITOR_COMMANDS:
                 if not self._running:
                     break
                 try:
@@ -90,11 +94,13 @@ class LiveMonitor:
                     if resp and not resp.is_null():
                         val = resp.value
                         num = val.magnitude if hasattr(val, "magnitude") else float(val)
-                        self.on_update(name, f"{num:.1f}")
+                        val_str  = f"{num:.1f}"
+                        severity = self.am.evaluate(name, num)
+                        self.on_update(name, val_str, unit, severity)
                     else:
-                        self.on_update(name, "—")
+                        self.on_update(name, "—", unit, "ok")
                 except Exception as e:
                     self.logger.warn(f"Monitor [{name}]: {e}")
-                    self.on_update(name, "ERR")
+                    self.on_update(name, "ERR", unit, "ok")
 
             time.sleep(self._interval)
